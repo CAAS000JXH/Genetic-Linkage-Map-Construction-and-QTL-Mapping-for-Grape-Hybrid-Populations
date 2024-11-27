@@ -1,0 +1,37 @@
+# Step 1: Quality control of sequencing data.
+$ fastp -i ${sample}_1.fq.gz -o ${sample}_1.clean.fq.gz -I ${sample}_2.fq.gz -O ${sample}_2.clean.fq.gz -h ${sample}.html -j ${sample}.json 2> ${sample}.txt
+
+# Step 2: Build a reference genome index.
+$ mkdir ref
+$ bwa index ref/hap1.genome.T2T.fasta
+$ samtools faidx ref/hap1.genome.T2T.fasta
+
+# Step 3: Align reads to the reference genome.
+$ bwa mem -t 80 -R "@RG\tID:${i}\tPL:illumina\tSM:${i}"  ref/hap1.genome.T2T.fasta ./fastp/${i}_1.clean.fq.gz  ./fastp/${i}_2.clean.fq.gz | samtools view -Sb - > bam_hap1/${i}.bam
+
+# Step 4: Sort the BAM files by chromosome position.
+$ samtools sort -@ 40 -m 4G -O bam -o ${i}.sort.bam ${i}.bam
+
+# Step 5: Remove PCR duplicates.
+$ gatk MarkDuplicates -I ${i}.sort.bam -O ${i}.rmdup.bam -M ${i}.sorted.markdup_metrics.txt
+
+# Step 6: Add index tags.
+$ samtools index ${i}.rmdup.bam
+
+# Step 7: Generate GVCF files.
+gatk HaplotypeCaller -R ref/hap1.genome.T2T.fasta \
+    --emit-ref-confidence GVCF \
+    -I ${i}.rmdup.bam \
+    -stand-call-conf 30 --sample-ploidy 2 \
+    -O ${i}.g.vcf 
+
+# Step 8: Merge the offspring GVCF files and extract SNP variant information.
+$ gatk CombineGVCFs -R ref/hap1.genome.T2T.fasta --variant gvcf.list -O offspring.g.vcf 
+$ gatk GenotypeGVCFs -R ref/hap1.genome.T2T.fasta -V offspring.g.vcf -O offspring.vcf
+$ gatk SelectVariants -R ref/hap1.genome.T2T.fasta -V offspring.vcf -select-type SNP  -O offspring.SNP.vcf 
+
+# Step 9: Merge the parent GVCF files and extract SNP variant information.
+$ gatk CombineGVCFs -R ref/hap1.genome.T2T.fasta --variant heicuiwuhe.g.vcf --variant zhuosexiang.g.vcf -O parent.g.vcf 
+$ gatk GenotypeGVCFs -R ref/hap1.genome.T2T.fasta -V parent.g.vcf -O parent.vcf
+$ gatk SelectVariants -R ref/hap1.genome.T2T.fasta -V parent.vcf -select-type SNP  -O parent.SNP.vcf 
+
