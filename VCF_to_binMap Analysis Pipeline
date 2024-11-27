@@ -1,0 +1,33 @@
+This analysis pipeline script is primarily developed using Python 3.10. The required dependencies are: pysam, openpyxl, pandas, numpy, and scipy.
+
+# Filter and convert the input VCF file. Please note the order of the parents in the VCF file; the female must be listed first, followed by the male. The minimum coverage for parent variant sites and the minimum coverage for offspring variant sites should be set according to actual requirements. For example, the minimum coverage for parent variant sites is set to 6, and the minimum coverage for offspring variant sites is set to 3.
+$ python parents_vcf_filter.py ${input_parent_vcf_file} filtered.parents.vcf ${female_ID} ${male_ID} ${minimum_coverage_for_parent_variants}
+$ python offsprings_vcf_filter.py ${input_offspring_vcf_file} filtered.offsprings.vcf ${minimum_coverage_for_offspring_variants}
+# VCF files are large and slow to process; only useful information should be extracted and saved as a CSV file to improve downstream computational efficiency.
+$ bcftools query -f '%CHROM;%POS;%REF;%ALT[;%GT]\n' filtered.parents.vcf > filtered.parents.csv
+$ bcftools query -f '%CHROM;%POS;%REF;%ALT[;%GT]\n' filtered.offsprings.vcf > filtered.offsprings.csv
+# Extract sample IDs from the VCF file.
+$ bcftools query -l filtered.offsprings.vcf > samples_header.txt
+# Merge the variant sites of parents and offspring.
+$ awk -F ';' 'BEGIN {OFS = FS} NR==FNR {a[$1","$2]=$1 FS $2 FS $3 FS $4 FS $5 FS $6; next} ($1","$2 in a) {line=a[$1","$2]; for(i=5; i<=NF; i++) line=line OFS $i; print line}' filtered.parents.csv filtered.offsprings.csv > merged.variant.csv
+# Filter out variant sites in the offspring with excessive missing data; for example, with 198 offspring, you can set the threshold for missing data to 50.
+$ python filtered.merged.variant.py merged.variant.csv filtered.merged.variant.csv ${missing_threshold}
+# Filter the data based on parent types, requiring that the ${parent_selection} can only be male or female.
+$ python filter_by_parent_type.py filtered.merged.variant.csv ${parent_selection}
+# Split the data files by chromosome ID.
+$ bcftools query -f '%CHROM\n' filtered.parents.vcf | sort -u > chromosome_ids.txt
+$ python split_chromosome_files.py ${parent_selection}
+# Construct MNP molecular markers.
+$ python MNP_marker_building.py ${parent_selection} chromosome_ids.txt
+# Determine the genotypes of the offspring MNP markers.
+$ python MNP_maker_genotype.py chromosome_ids.txt ${parent_selection} ${progeny_count}
+# Filter the genotype data of the offspring MNP markers, requiring that the missing rate of sites does not exceed 25%. Perform a chi-squared test and only output sites with p > 0.05.
+$ python MNP_maker_filter.py chromosome_ids.txt ${parent_selection} ${progeny_count}
+# Check each line of the MNP markers to see if a swap is needed. For example, replace nn with np and np with nn.
+$ python MNP_maker_swap.py chromosome_ids.txt ${parent_selection} 
+# Determine the segregation types of bins based on MNP genotypes.
+$ python bin_maker_genotype.py chromosome_ids.txt ${parent_selection} ${bin_window_size}
+# Correct the genotypes of the bins.
+$ python bin_correct_genotypes.py chromosome_ids.txt ${parent_selection} 
+# Output the results.
+$ python output_to_xlsx.py chromosome_ids.txt ${parent_selection}  ${output_file} samples_header.txt 
